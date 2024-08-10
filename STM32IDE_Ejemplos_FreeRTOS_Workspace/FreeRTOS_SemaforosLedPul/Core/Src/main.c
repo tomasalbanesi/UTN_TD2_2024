@@ -23,7 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "task.h"
-#include "queue.h"
+#include "semphr.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,8 +51,9 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* USER CODE BEGIN PV */
 
+/* USER CODE BEGIN PV */
+SemaphoreHandle_t semaforo;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,48 +68,46 @@ void StartDefaultTask(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-xQueueHandle cola_tiempo;
-
-void tarea_puslador(void *p)
-{
-	TickType_t tics;
-
-	while(1)
-	{
-		if(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_RESET)
-		{
-			tics = xTaskGetTickCount();
-			while(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_RESET)
-			{
-				vTaskDelay(1);
-			}
-			tics = xTaskGetTickCount();
-			if(tics > 10000) tics = 10000;
-			if(tics > 50)
-			{
-				xQueueSend(cola_tiempo, &tics, 0);
-			}
+void TareaLed(void *p){
+	while(1){
+		if(xSemaphoreTake(semaforo, pdMS_TO_TICKS(50)) == pdTRUE){
+			// Si el semaforo se toma, el LED se queda encendido
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_SET);
+			vTaskDelay(pdMS_TO_TICKS(50)); // Demora de 2 segundos
+		}else{
+			// Parpadeo normal
+            HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5); // Cambiar el estado del LED
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
+            vTaskDelay(pdMS_TO_TICKS(50)); // Esperar 500 ms
 		}
-		vTaskDelay(1);
 	}
 }
 
-void tarea_led(void *p)
-{
-	TickType_t demora = 500;
-	TickType_t valor;
+void TareaPulsador(void *p){
+	static TickType_t lastDebounceTime = 0;
+	const TickType_t debounceDelay = pdMS_TO_TICKS(50); // 50 ms de debounce
+	static uint8_t lastButtonState = GPIO_PIN_SET;
+	uint8_t buttonState;
 
-	while(1)
-	{
-		if(xQueueReceive(cola_tiempo, &valor, 0) == pdPASS)
-		{
-			demora = valor;
-		}
-		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-		vTaskDelay(demora);
+	for (;;) {
+	    buttonState = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
+
+	    if (buttonState != lastButtonState) {
+	        lastDebounceTime = xTaskGetTickCount(); // Resetear el tiempo de debounce
+	    }
+
+	    if ((xTaskGetTickCount() - lastDebounceTime) > debounceDelay) {
+	        if (buttonState == GPIO_PIN_RESET) {
+	            xSemaphoreGive(semaforo); // Liberar el semáforo si se presiona el botón
+	            vTaskDelay(pdMS_TO_TICKS(10)); // Esperar un tiempo para evitar reacciones rápidas
+	        }
+	    }
+
+	    lastButtonState = buttonState;
+	    vTaskDelay(pdMS_TO_TICKS(10)); // Reducir el uso de la CPU
 	}
 }
-
 /* USER CODE END 0 */
 
 /**
@@ -141,6 +140,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -154,6 +154,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
+  semaforo = xSemaphoreCreateBinary();
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -162,7 +163,6 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
-  cola_tiempo = xQueueCreate(4, sizeof(TickType_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -171,8 +171,10 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-  xTaskCreate(tarea_led, "led", configMINIMAL_STACK_SIZE, NULL, osPriorityNormal, NULL);
-  xTaskCreate(tarea_puslador, "btn", configMINIMAL_STACK_SIZE, NULL, osPriorityNormal, NULL);
+  xTaskCreate(TareaLed, "TareaLed",
+  			configMINIMAL_STACK_SIZE, NULL, osPriorityNormal, NULL);
+  xTaskCreate(TareaPulsador, "TareaPulsador",
+    			configMINIMAL_STACK_SIZE, NULL, osPriorityNormal, NULL);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -291,6 +293,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+  /*Configure GPIO pin : LD2_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
@@ -300,15 +309,28 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
+/* USER CODE BEGIN MX_GPIO_Init_2 */
+
   /*Configure GPIO pin : GPIOA - GPIO_PIN_5 */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
 
-/* USER CODE BEGIN MX_GPIO_Init_2 */
+  /*Configure GPIO pin : GPIOA - GPIO_PIN_6 */
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    /*Configure GPIO pin Output Level */
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
+
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
