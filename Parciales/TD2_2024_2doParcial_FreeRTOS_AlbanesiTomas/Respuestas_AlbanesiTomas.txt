@@ -1,0 +1,46 @@
+### Técnicas Digitales II - R4051 - 2024
+### 2do Parcial - FreeRTOS
+### Albanesi, Tomás Agustín (171.604-9)
+
+## Respuestas sección Teoría:
+
+1) RTOS: ¿Qué es una espera activa? ¿Es útil o no? ¿Por qué?
+
+Dentro de los sistemas operativos en tiempo real, se define a una espera activa como a un método donde una tarea o proceso
+verifica repetidamente una condición, como por ejemplo, esperar algun valor de una variable o algo similar. 
+Es útil ya que podemos controlar seguir ejecutando un proceso y siempre verificar alguna condición lógica.
+
+2) FreeRTOS. ¿De dónde obtiene la función xTaskCreate de FreeRTOS la memoria necesaria para crear la TCB, Pila y demás estructuras de datos para crear y mantener una tarea?
+
+Con respecto al manejo de la memoria dentro de FreeRTOS, cuando se llama a la función xTaskCreate(), FreeRTOS asigna la memoria necesaria para la TCB, Pila y demás estructuras de datos de forma dinámica. Sin embargo, no utiliza las funciones estandar de ANSI C para el manejo de la memoria como malloc() y free(), debido a que las mismas no estan presentes en todos los sistema donde se requiere implementar FreeRTOS y no están desarrolladas para su utilización de forma concurrente, entre otros. Para gestionar la memoria y mantener la tarea, FreeRTOS utiliza sus propias funciones como pvPortMalloc() para asignar la memoria necesaria para crear y mantener una tarea.
+
+3) FreeRTOS. ¿Cuál es la diferencia entre un semáforo binario y uno de mutua exclusión para FreeRTOS?
+
+La principal diferencia entre estos dos tipos de semáforos es que el semáforo binario basicamente puede estar bloqueado o liberado, y por esto, se usa principalmente para sincronización y señalización entre dos tareas. Sin embargo, los semáforos del tipo mutex, si bien tambien puede estar bloqueado o liberado, solamente puede ser consultado por un subproceso a la vez, lo que generalmente se aplica a proteger zonas de memoria compartida.
+
+4) FreeRTOS. ¿Qué diferencia existe en una interrupción que usa funciones de interrupción de FreeRTOS si el código de la misma usa la API portEND_SWITCHING_ISR() o no lo usa? Haga un diagrama temporal.
+
+Cuando no se usa portEND_SWITCHING_ISR() al final de una interrupción, FreeRTOS no verifica si la interrupción ha desbloqueado una tarea de mayor prioridad que la tarea que actualmente está ejecutándose. Esto significa que, después de que la interrupción se completa, el sistema continúa ejecutando la misma tarea que estaba corriendo antes de la interrupción, sin considerar si una tarea más prioritaria está lista para ejecutarse.
+
+Tarea 1 (en ejecucion)	: --------------| (ISR)			 |-------------------
+Codigo ISR		: 		|------------------------|
+Tarea 2 (> prior que 1)	:	
+
+Al incluir portEND_SWITCHING_ISR() al final de una interrupción, FreeRTOS comprueba si la interrupción ha causado que una tarea de mayor prioridad se desbloquee. Si es así, se realiza un cambio de contexto al salir de la interrupción para ejecutar la tarea de mayor prioridad.
+
+Tarea 1 (en ejecucion)	: --------------| (ISR)			 
+Codigo ISR		: 		|------------------------|
+Tarea 2 (> prior que 1)	:					 |------------------- 
+
+5) FreeRTOS. ¿Por qué la API xQueueReceiveFromISR no se pasa ningún parámetro relacionado con el tiempo de bloqueo de la tarea?
+
+Como esta función se usa dentro de una ISR, y en el propio contexto de interrupción, las funciones no pueden bloquearse o demorar la ejecución. Una interrupción, por definición, debe ser rápida y no debe realizar operaciones que puedan llevar a la suspensión o al bloqueo del sistema. Por eso, no se ha de enviar un parámetro para especificar un tiempo de espera.
+
+## Respuestas sección Práctica:
+
+2) Describa el funcionamiento del sistema. ¿En qué momento se ejecuta la tarea idle en esta caso? ¿Por qué?
+
+El funcionamiento de este sistema se basa en la ejecución de tres tareas en paralelo. La tarea del pulsador se encarga de leer si el pulsado se encuentra presionado cada 20 milisegundos, y como tiene mas prioridad que las otras tareas tarea_on y tarea_off siempre el planificador o scheduler la va a tener en cuenta para leer el valor del pulsador. Cuando se detecta que el pulsador se encuentra presionado mas de 2 segundos, el sistema cambia las prioridades de las tareas on y off, estableciendo la tarea on con mayor prioridad que la tarea off, y por lo tanto, el led se enciende producto que ahora la tarea led_on posee mas prioridad. Luego, si se vuelve a detectar que el pulsador se encuentra presionado por mas de 2 segundos, el sistema vuelve la tarea_on al estado original y sube la prioridad de la tarea_off, y por lo tanto el led se apaga. Luego, si se detecta por tercera vez el pulsador presionado, vuelve ambas tareas a la prioridad original, y entonces, ambas compiten por enceder o apagar el led.
+
+4) Si en algun momento la prioridad de tarea_btn fuera igual a las prioridades de tarea_on y tarea_off el scheduler o planificador no tendria en cuenta la relevancia de la tarea_btn y podría pasar que se presione el pulsador y la tarea no se esté ejecutando; y de esta forma no se llevaria a cabo un correcto funcionamiento del sistema.
+
